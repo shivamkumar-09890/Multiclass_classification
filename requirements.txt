@@ -1,0 +1,16 @@
+# Core Data Science Libraries
+numpy
+pandas
+scikit-learn
+
+# Deep Learning & Transformers
+torch
+transformers
+datasets
+
+# Visualization
+matplotlib
+seaborn
+# Utilities
+tqdm
+joblib
