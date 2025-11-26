@@ -12,7 +12,7 @@ This project implements a multi-label classification system for European Court o
 
 ## Project Structure
 
-'''
+```
 ├── scripts/
 │   ├── 01_load_explore_dataset.py      # Load and explore ECTHR_B dataset
 │   ├── 02_eda_visualization.py         # Exploratory Data Analysis with visualizations
@@ -20,18 +20,18 @@ This project implements a multi-label classification system for European Court o
 │   ├── 04_train_models.py              # Train baseline and fine-tuned models
 │   ├── 05_compare_models.py            # Evaluate and compare model performance
 │   └── 06_documentation.py             # Generate comprehensive report
-├── requirements.txt                     # Python dependencies
-└── README.md                            # This file
-'''
+├── requirements.txt                    # Python dependencies
+└── README.md                           # This file
+```
 
 ## Installation
 
 1. **Clone or download this project**
 
 2. **Install dependencies**:
-   '''bash
+   ```bash
    pip install -r requirements.txt
-   '''
+   ```
 
 3. **Ensure you have sufficient disk space** for model downloads (approximately 1-2 GB)
 
@@ -39,7 +39,7 @@ This project implements a multi-label classification system for European Court o
 
 Run the scripts in sequential order:
 
-'''
+```
 bash
 # 1. Load and explore the dataset
 python scripts/01_load_explore_dataset.py
@@ -58,7 +58,7 @@ python scripts/05_compare_models.py
 
 # 6. Generate final documentation report
 python scripts/06_documentation.py
-'''
+```
 
 ## Expected Outputs
 
