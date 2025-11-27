@@ -37,8 +37,8 @@ def explore_dataset_structure(dataset):
     print("-"*80)
     sample = dataset['train'][0]
     print(f"\nSample from training set:")
-    print(f"  - Text length: {len(sample['facts'])} characters")
-    print(f"  - First 300 chars of facts: {sample['facts'][:300]}...")
+    print(f"  - Text length: {len(sample['text'])} characters")
+    print(f"  - First 300 chars of facts: {sample['text'][:300]}...")
     print(f"  - Labels: {sample['labels']}")
     
     return sample
@@ -80,6 +80,14 @@ def analyze_labels(dataset):
     
     return all_labels, label_counts
 
+def normalize_text(t):
+    if t is None:
+        return ""
+    if isinstance(t, list):
+        # join list into a string if list of strings
+        return " ".join(str(x) for x in t)
+    return str(t)  # convert anything else to string
+
 def check_missing_duplicates(dataset):
     """Check for missing values and duplicates"""
     print("\n" + "="*80)
@@ -91,14 +99,19 @@ def check_missing_duplicates(dataset):
             print(f"\n{split.upper()} SET:")
             
             # Check for missing values
-            missing_facts = sum(1 for x in dataset[split] if not x['facts'] or len(x['facts'].strip()) == 0)
+            missing_facts = sum(
+                1
+                for x in dataset[split]
+                if len(normalize_text(x['text']).strip()) == 0
+            )
             missing_labels = sum(1 for x in dataset[split] if not x['labels'] or len(x['labels']) == 0)
             
             print(f"  - Missing facts: {missing_facts}")
             print(f"  - Missing labels: {missing_labels}")
             
             # Check for duplicates
-            facts_list = [x['facts'] for x in dataset[split]]
+            # facts_list = [x['text'] for x in dataset[split]]
+            facts_list = [normalize_text(x['text']) for x in dataset[split]]
             unique_facts = len(set(facts_list))
             duplicates = len(facts_list) - unique_facts
             
