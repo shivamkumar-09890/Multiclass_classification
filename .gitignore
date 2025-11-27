@@ -87,3 +87,6 @@ Thumbs.db
 # Node (in case you use JS frontend)
 node_modules/
 package-lock.json
+
+ecthr_longformer_finetuned/
+legal_bert_baseline/
