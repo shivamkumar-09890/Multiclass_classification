@@ -1,228 +1,241 @@
 """
-Task 4: Train Baseline and Fine-tuned Models
-- Baseline: Pre-trained transformer (no fine-tuning)
-- Fine-tuned: Model trained on ECTHR_B dataset
-- Compares both approaches
+Task 4: Train Fine-tuned Longformer on ECTHR_B (Multi-label classification)
+FIXED for RTX 4050 (6GB VRAM) Local Training
 """
+
+import os
+# Fix for tokenizer parallelism deadlocks
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 from datasets import load_dataset
 from transformers import (
     AutoTokenizer, AutoModelForSequenceClassification,
-    TrainingArguments, Trainer, TextClassificationPipeline
+    TrainingArguments, Trainer, DataCollatorWithPadding
 )
 from sklearn.preprocessing import MultiLabelBinarizer
 import numpy as np
+import torch
+import joblib
 import warnings
 warnings.filterwarnings('ignore')
 
+def normalize_text(txt):
+    """Ensure text is a string"""
+    if txt is None:
+        return ""
+    if isinstance(txt, list):
+        return " ".join(str(x) for x in txt)
+    return str(txt)
+
+# --- 1. DEFINE CUSTOM COLLATOR ---
+class MultiLabelDataCollator(DataCollatorWithPadding):
+    """
+    Standard DataCollatorWithPadding but forces labels to be float32
+    to prevent BCEWithLogitsLoss from crashing with Long tensors.
+    """
+    def __call__(self, features):
+        batch = super().__call__(features)
+        if "labels" in batch:
+            # Force labels to float32 (crucial for Multi-Label BCE Loss)
+            batch["labels"] = batch["labels"].float()
+        return batch
+
+
 class ECTHRTrainer:
-    def __init__(self, model_name="distilbert-base-uncased"):
+    def __init__(self, model_name="allenai/longformer-base-4096", max_length=4096):
         print(f"[v0] Initializing trainer with model: {model_name}")
+        print(f"[v0] Max Sequence Length: {max_length}")
         self.model_name = model_name
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
         self.mlb = None
         self.num_labels = None
-        
+        self.max_length = max_length
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
     def load_and_prepare_data(self):
-        """Load and prepare dataset"""
         print("[v0] Loading ECTHR_B dataset...")
         dataset = load_dataset("lex_glue", "ecthr_b")
-        
-        # Get unique labels
-        all_labels = set()
-        for split in ['train', 'validation', 'test']:
-            if split in dataset:
-                for example in dataset[split]:
-                    all_labels.update(example['labels'])
-        
-        self.num_labels = len(all_labels)
+
+        # Fit MultiLabelBinarizer on all labels
+        all_labels = [example['labels'] for split in dataset.values() for example in split]
         self.mlb = MultiLabelBinarizer()
-        self.mlb.fit([all_labels])
-        
+        self.mlb.fit(all_labels)
+        self.num_labels = len(self.mlb.classes_)
+
         print(f"Number of unique labels: {self.num_labels}")
         return dataset
-    
-    def tokenize_function(self, examples):
-        """Tokenize text samples"""
-        return self.tokenizer(
-            examples['facts'],
-            padding='max_length',
-            truncation=True,
-            max_length=512
-        )
-    
-    def multi_label_metrics(self, predictions, labels, threshold=0.5):
-        """Calculate metrics for multi-label classification"""
-        from sklearn.metrics import (
-            hamming_loss, accuracy_score, f1_score,
-            precision_score, recall_score
-        )
-        
-        # Convert to binary predictions
-        pred_binary = (predictions > threshold).astype(int)
-        
-        hamming = hamming_loss(labels, pred_binary)
-        accuracy = accuracy_score(labels, pred_binary)
-        f1_micro = f1_score(labels, pred_binary, average='micro', zero_division=0)
-        f1_macro = f1_score(labels, pred_binary, average='macro', zero_division=0)
-        precision = precision_score(labels, pred_binary, average='micro', zero_division=0)
-        recall = recall_score(labels, pred_binary, average='micro', zero_division=0)
-        
-        return {
-            'hamming_loss': hamming,
-            'accuracy': accuracy,
-            'f1_micro': f1_micro,
-            'f1_macro': f1_macro,
-            'precision': precision,
-            'recall': recall
-        }
-    
-    def train_model(self, dataset, output_dir="./ecthr_model", epochs=3):
-        """Train the model on ECTHR dataset"""
+
+    def preprocess_dataset(self, dataset):
+        """Convert labels to binary vectors"""
+        def encode_example(example):
+            text = normalize_text(example['text'])
+            labels = self.mlb.transform([example['labels']])[0]
+            return {"text": text, "labels": labels.astype(np.float32)}
+
+        processed = {}
+        for split in ['train', 'validation', 'test']:
+            if split in dataset:
+                processed[split] = dataset[split].map(encode_example, remove_columns=dataset[split].column_names)
+        return processed
+
+    def train_model(self, dataset, output_dir="./ecthr_longformer_finetuned", epochs=3):
         print("\n" + "="*80)
-        print("TRAINING FINE-TUNED MODEL")
+        print("TRAINING FINE-TUNED LONGFORMER MODEL")
         print("="*80)
-        
-        # Prepare data
-        print("[v0] Preparing training data...")
-        train_dataset = dataset['train']
-        val_dataset = dataset['validation']
-        
-        # Tokenize
-        train_encoded = train_dataset.map(
-            self.tokenize_function,
-            batched=True,
-            remove_columns=['facts']
-        )
-        val_encoded = val_dataset.map(
-            self.tokenize_function,
-            batched=True,
-            remove_columns=['facts']
-        )
-        
-        # Convert labels to binary format
-        def label_to_binary(example):
-            binary_labels = self.mlb.transform([example['labels']])[0]
-            example['labels'] = binary_labels.astype(np.float32)
-            return example
-        
-        train_encoded = train_encoded.map(label_to_binary)
-        val_encoded = val_encoded.map(label_to_binary)
-        
+
+        def tokenize_and_prepare(examples):
+            texts = [normalize_text(t) for t in examples["text"]]
+            tokenized = self.tokenizer(
+                texts,
+                truncation=True,
+                padding="max_length",
+                max_length=self.max_length,
+            )
+            tokenized["labels"] = examples["labels"]
+            return tokenized
+
+        print(f"[v0] Tokenizing with max_length={self.max_length}...")
+        train_encoded = dataset["train"].map(tokenize_and_prepare, batched=True, remove_columns=dataset["train"].column_names)
+        val_encoded = dataset["validation"].map(tokenize_and_prepare, batched=True, remove_columns=dataset["validation"].column_names)
+
+        train_encoded.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
+        val_encoded.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
+
         # Load model
-        print("[v0] Loading model for training...")
         model = AutoModelForSequenceClassification.from_pretrained(
             self.model_name,
             num_labels=self.num_labels,
             problem_type="multi_label_classification"
         )
         
-        # Training arguments
+        # Explicitly enable gradient checkpointing to be safe
+        model.gradient_checkpointing_enable()
+
+        # --- TRAINING ARGUMENTS OPTIMIZED FOR RTX 4050 (6GB) ---
         training_args = TrainingArguments(
             output_dir=output_dir,
+            overwrite_output_dir=True,
             num_train_epochs=epochs,
-            per_device_train_batch_size=8,
-            per_device_eval_batch_size=8,
-            learning_rate=2e-5,
-            weight_decay=0.01,
-            logging_steps=100,
-            evaluation_strategy="epoch",
+            
+            # --- MEMORY SURVIVAL SETTINGS ---
+            per_device_train_batch_size=1,   # MUST BE 1 for 6GB VRAM + 4096 tokens
+            gradient_accumulation_steps=16,  # Simulates batch size 16
+            per_device_eval_batch_size=1,    # Eval is also heavy, keep it 1
+            
+            # --- OPTIMIZER ---
+            optim="adamw_bnb_8bit",          # REQUIRES bitsandbytes. Saves ~1.5GB VRAM.
+            
+            # --- HARDWARE ACCELERATION ---
+            fp16=True,                       # Tensor Cores
+            gradient_checkpointing=True,     # Recomputes gradients to save memory
+            
+            # --- CPU EFFICIENCY ---
+            dataloader_num_workers=4,        # Good for your 8-core CPU
+            dataloader_pin_memory=True,
+            group_by_length=True,
+            
+            # --- LOGGING ---
+            eval_strategy="epoch",
             save_strategy="epoch",
-            load_best_model_at_end=True
+            logging_steps=50,
+            learning_rate=2e-5,
+            load_best_model_at_end=True,
+            metric_for_best_model="eval_loss",
+            save_total_limit=1,              # Only keep best model to save disk space
+            run_name="longformer-ecthr-b-4096",
+            report_to=[]
         )
-        
-        # Trainer
+
+        data_collator = MultiLabelDataCollator(tokenizer=self.tokenizer)
+
         trainer = Trainer(
             model=model,
             args=training_args,
             train_dataset=train_encoded,
-            eval_dataset=val_encoded
+            eval_dataset=val_encoded,
+            tokenizer=self.tokenizer,
+            data_collator=data_collator,
         )
-        
-        # Train
+
         print("[v0] Starting training...")
         trainer.train()
-        
-        # Save
-        print(f"[v0] Saving model to {output_dir}")
+
+        print(f"[v0] Saving final model to {output_dir}")
         trainer.save_model(output_dir)
-        
+        self.tokenizer.save_pretrained(output_dir)
+        joblib.dump(self.mlb, f"{output_dir}/mlb.pkl")
+
         return model, trainer
-    
-    def evaluate_model(self, model, dataset, split='test'):
-        """Evaluate model on test set"""
+
+    def evaluate_model(self, model, dataset, split='test', threshold=0.5):
         print("\n" + "="*80)
         print(f"EVALUATING ON {split.upper()} SET")
         print("="*80)
-        
-        test_dataset = dataset[split]
-        
-        # Tokenize
-        test_encoded = test_dataset.map(
-            self.tokenize_function,
-            batched=True,
-            remove_columns=['facts']
-        )
-        
-        # Convert labels
-        def label_to_binary(example):
-            binary_labels = self.mlb.transform([example['labels']])[0]
-            example['labels'] = binary_labels.astype(np.float32)
-            return example
-        
-        test_encoded = test_encoded.map(label_to_binary)
-        
-        # Get predictions
+
+        # Careful evaluation mapping to avoid OOM
+        def tokenize_eval(examples):
+            texts = [normalize_text(t) for t in examples["text"]]
+            return self.tokenizer(
+                texts,
+                truncation=True,
+                padding="max_length",
+                max_length=self.max_length,
+            )
+
+        test_encoded = dataset[split].map(tokenize_eval, batched=True)
+        test_encoded.set_format(type="torch", columns=["input_ids", "attention_mask", "labels"])
+
         from torch.utils.data import DataLoader
-        import torch
-        
-        device = torch.device('cpu')  # Use CPU for simplicity
-        model.to(device)
+        # Use batch_size=2 for Eval. If it crashes, change to 1.
+        loader = DataLoader(test_encoded, batch_size=2, shuffle=False)
+
         model.eval()
-        
-        data_loader = DataLoader(test_encoded, batch_size=8)
-        all_preds = []
-        all_labels = []
-        
+        all_preds, all_labels = [], []
+
+        print("Running prediction loop...")
         with torch.no_grad():
-            for batch in data_loader:
-                input_ids = batch['input_ids'].to(device)
-                attention_mask = batch['attention_mask'].to(device)
-                
+            for batch in loader:
+                input_ids = batch['input_ids'].to(self.device)
+                attention_mask = batch['attention_mask'].to(self.device)
+                labels = batch['labels'].to(self.device).float()
+
                 outputs = model(input_ids=input_ids, attention_mask=attention_mask)
                 logits = outputs.logits
-                
-                all_preds.extend(torch.sigmoid(logits).cpu().numpy())
-                all_labels.extend(batch['labels'].numpy())
-        
+                probs = torch.sigmoid(logits)
+
+                all_preds.extend(probs.cpu().numpy())
+                all_labels.extend(labels.cpu().numpy())
+
         all_preds = np.array(all_preds)
         all_labels = np.array(all_labels)
+        pred_binary = (all_preds > threshold).astype(int)
+
+        from sklearn.metrics import hamming_loss, f1_score, accuracy_score
         
-        # Calculate metrics
-        metrics = self.multi_label_metrics(all_preds, all_labels)
+        # Calculate key metrics
+        acc = accuracy_score(all_labels, pred_binary)
+        f1_mic = f1_score(all_labels, pred_binary, average='micro', zero_division=0)
+        f1_mac = f1_score(all_labels, pred_binary, average='macro', zero_division=0)
         
-        print(f"\nMetrics on {split} set:")
-        for metric, value in metrics.items():
-            print(f"  - {metric}: {value:.4f}")
-        
-        return metrics
+        print(f"  - Accuracy: {acc:.4f}")
+        print(f"  - F1 Micro: {f1_mic:.4f}")
+        print(f"  - F1 Macro: {f1_mac:.4f}")
+
+        return {"accuracy": acc, "f1_micro": f1_mic, "f1_macro": f1_mac}
+
 
 if __name__ == "__main__":
-    # Initialize trainer
-    trainer_obj = ECTHRTrainer(model_name="distilbert-base-uncased")
+    # --- FIXED: Use 4096 to match your data ---
+    trainer_obj = ECTHRTrainer(model_name="allenai/longformer-base-4096", max_length=4096)
     
-    # Load data
-    dataset = trainer_obj.load_and_prepare_data()
-    
-    # Train model
-    model, trainer = trainer_obj.train_model(dataset, epochs=3)
+    raw_dataset = trainer_obj.load_and_prepare_data()
+    processed_dataset = trainer_obj.preprocess_dataset(raw_dataset)
+
+    model, trainer = trainer_obj.train_model(processed_dataset, epochs=3)
     
     # Evaluate
-    metrics = trainer_obj.evaluate_model(model, dataset, split='test')
-    
+    metrics = trainer_obj.evaluate_model(model, processed_dataset, split='test')
+
     print("\n" + "="*80)
-    print("TRAINING COMPLETE")
+    print("TRAINING & EVALUATION COMPLETE")
     print("="*80)
-    print("✓ Model fine-tuned on ECTHR_B dataset")
-    print("✓ Model saved to ./ecthr_model")
-    print("✓ Ready for evaluation and comparison")
