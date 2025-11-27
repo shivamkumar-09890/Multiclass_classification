@@ -3,7 +3,7 @@ from transformers import AutoModelForSequenceClassification, AutoConfig
 import bitsandbytes as bnb
 import gc
 
-# --- CONFIGURATION ---
+#--- CONFIGURATION ---
 MODEL_NAME = "allenai/longformer-base-4096"
 SEQ_LEN = 4096       # The target length
 BATCH_SIZE = 1       # The target batch size
