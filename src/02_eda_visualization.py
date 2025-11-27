@@ -20,6 +20,14 @@ def load_data():
     dataset = load_dataset("lex_glue", "ecthr_b")
     return dataset
 
+def normalize_text(t):
+    """Convert text to clean string."""
+    if t is None:
+        return ""
+    if isinstance(t, list):  
+        return " ".join(str(x) for x in t)
+    return str(t)
+
 def analyze_text_statistics(dataset):
     """Analyze text length and complexity"""
     print("\n" + "="*80)
@@ -30,7 +38,8 @@ def analyze_text_statistics(dataset):
     
     for split in ['train', 'validation', 'test']:
         if split in dataset:
-            lengths = [len(x['facts'].split()) for x in dataset[split]]
+            normalized_texts = [normalize_text(x['text']) for x in dataset[split]]
+            lengths = [len(text.split()) for text in normalized_texts]
             
             stats['split'].append(split)
             stats['avg_length'].append(np.mean(lengths))
@@ -122,7 +131,9 @@ def visualize_text_length(dataset):
     
     for idx, split in enumerate(['train', 'validation', 'test']):
         if split in dataset:
-            lengths = [len(x['facts'].split()) for x in dataset[split]]
+            normalized_texts = [normalize_text(x['text']) for x in dataset[split]]
+            lengths = [len(x.split()) for x in normalized_texts]
+
             ax = axes[idx]
             ax.hist(lengths, bins=50, color=colors[split], alpha=0.7, edgecolor='black')
             ax.set_xlabel('Number of Words')
@@ -142,12 +153,15 @@ def dataset_split_analysis(dataset):
     print("="*80)
     
     splits_info = {}
+
     for split in ['train', 'validation', 'test']:
         if split in dataset:
+            texts = [normalize_text(x['text']) for x in dataset[split]]
+
             splits_info[split] = {
                 'samples': len(dataset[split]),
                 'avg_labels': np.mean([len(x['labels']) for x in dataset[split]]),
-                'avg_words': np.mean([len(x['facts'].split()) for x in dataset[split]])
+                'avg_words': np.mean([len(t.split()) for t in texts])
             }
     
     df = pd.DataFrame(splits_info).T
