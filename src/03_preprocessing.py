@@ -19,30 +19,39 @@ def load_dataset_ecthr():
     dataset = load_dataset("lex_glue", "ecthr_b")
     return dataset
 
-def clean_text(text):
+def normalize_text(txt):
+    """Ensure text is a string."""
+    if txt is None:
+        return ""
+    if isinstance(txt, list):
+        # Join list of strings into one string
+        return " ".join(str(x) for x in txt)
+    return str(txt)
+
+def clean_text(txt):
     """Clean and normalize legal text"""
-    if not text:
+    if not txt:
         return ""
     
     # Convert to lowercase
-    text = text.lower()
+    txt = txt.lower()
     
     # Remove extra whitespace
-    text = re.sub(r'\s+', ' ', text)
+    txt = re.sub(r'\s+', ' ', txt)
     
     # Remove URLs
-    text = re.sub(r'http\S+|www\S+', '', text)
+    txt = re.sub(r'http\S+|www\S+', '', txt)
     
     # Remove email addresses
-    text = re.sub(r'\S+@\S+', '', text)
+    txt = re.sub(r'\S+@\S+', '', txt)
     
     # Remove special characters but keep important punctuation for legal text
-    text = re.sub(r'[^\w\s.,;:\-]', '', text)
+    txt = re.sub(r'[^\w\s.,;:\-]', '', txt)
     
     # Strip leading/trailing whitespace
-    text = text.strip()
+    txt = txt.strip()
     
-    return text
+    return txt
 
 def preprocess_dataset(dataset):
     """Preprocess the entire dataset"""
@@ -60,21 +69,21 @@ def preprocess_dataset(dataset):
             print(f"  - Before: {len(dataset[split])} samples")
             
             # Remove duplicates and empty samples
-            data_dict = {'facts': [], 'labels': []}
+            data_dict = {'text': [], 'labels': []}
             seen_facts = set()
             
             for example in dataset[split]:
-                facts = clean_text(example['facts'])
+                text = clean_text(normalize_text(example['text']))
                 labels = example['labels']
                 
                 # Skip empty or duplicate samples
-                if facts and len(facts.strip()) > 0 and facts not in seen_facts and labels:
-                    seen_facts.add(facts)
-                    data_dict['facts'].append(facts)
+                if text and len(text.strip()) > 0 and text not in seen_facts and labels:
+                    seen_facts.add(text)
+                    data_dict['text'].append(text)
                     data_dict['labels'].append(labels)
             
-            print(f"  - After: {len(data_dict['facts'])} samples")
-            print(f"  - Duplicates/empty removed: {len(dataset[split]) - len(data_dict['facts'])}")
+            print(f"  - After: {len(data_dict['text'])} samples")
+            print(f"  - Duplicates/empty removed: {len(dataset[split]) - len(data_dict['text'])}")
             
             # Create processed dataset
             processed_data[split] = data_dict
@@ -90,7 +99,7 @@ def analyze_preprocessing_effects(original, processed):
     for split in ['train', 'validation', 'test']:
         if split in original:
             original_size = len(original[split])
-            processed_size = len(processed[split]['facts'])
+            processed_size = len(processed[split]['text'])
             removed = original_size - processed_size
             
             print(f"\n{split.upper()} SET:")
@@ -100,9 +109,9 @@ def analyze_preprocessing_effects(original, processed):
             
             # Sample before and after
             print(f"\n  - Original sample:")
-            print(f"    {original[split][0]['facts'][:100]}...")
+            print(f"    {original[split][0]['text'][:100]}...")
             print(f"  - Cleaned sample:")
-            print(f"    {processed[split]['facts'][0][:100]}...")
+            print(f"    {processed[split]['text'][0][:100]}...")
 
 def create_train_val_split(processed_data):
     """Create train/validation split from preprocessed data"""
@@ -111,7 +120,7 @@ def create_train_val_split(processed_data):
     print("="*80)
     
     # Use the provided train split for training
-    train_facts = processed_data['train']['facts']
+    train_facts = processed_data['train']['text']
     train_labels = processed_data['train']['labels']
     
     # Further split train into train and validation (80-20)
@@ -122,11 +131,11 @@ def create_train_val_split(processed_data):
     print(f"\nTrain/Validation Split (from original train set):")
     print(f"  - Training samples: {len(X_train)} (80%)")
     print(f"  - Validation samples: {len(X_val)} (20%)")
-    print(f"  - Test samples: {len(processed_data['test']['facts'])}")
+    print(f"  - Test samples: {len(processed_data['test']['text'])}")
     
     split_data = {
-        'train': {'facts': X_train, 'labels': y_train},
-        'validation': {'facts': X_val, 'labels': y_val},
+        'train': {'text': X_train, 'labels': y_train},
+        'validation': {'text': X_val, 'labels': y_val},
         'test': processed_data['test']
     }
     
