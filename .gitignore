@@ -90,3 +90,5 @@ package-lock.json
 
 ecthr_longformer_finetuned/
 legal_bert_baseline/
+processed_ecthr_b/
+ecthr_longformer_weighted/
