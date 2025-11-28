@@ -36,12 +36,58 @@ def explore_dataset_structure(dataset):
     print("SAMPLE DATA:")
     print("-"*80)
     sample = dataset['train'][0]
+    
+    # --- FIX STARTS HERE ---
+    # 1. Join the list of strings into one large string
+    full_text = " ".join(sample['text'])
+    
     print(f"\nSample from training set:")
-    print(f"  - Text length: {len(sample['text'])} characters")
-    print(f"  - First 300 chars of facts: {sample['text'][:300]}...")
+    # Update label to reflect we are counting chars of the joined text, not list items
+    print(f"  - Text length: {len(full_text)} characters") 
+    # Now slice the string, not the list
+    print(f"  - First 300 chars of facts: {full_text[:300]}...")
+    # --- FIX ENDS HERE ---
+    
     print(f"  - Labels: {sample['labels']}")
     
     return sample
+
+def analyze_word_counts(dataset):
+    """Analyze word counts across all splits"""
+    print("\n" + "="*80)
+    print("WORD COUNT ANALYSIS")
+    print("="*80)
+    
+    global_max_words = 0
+    global_max_info = {}
+    
+    for split in dataset.keys():
+        print(f"\nAnalyzing {split.upper()} set...")
+        word_counts = []
+        
+        for i, sample in enumerate(dataset[split]):
+            # 1. Join the list of paragraphs into one string
+            full_text = " ".join(sample['text'])
+            
+            # 2. Split by whitespace to get word count
+            # (Note: This is an approximation. For exact tokens, use a tokenizer)
+            n_words = len(full_text.split())
+            word_counts.append(n_words)
+            
+            # Track global maximum
+            if n_words > global_max_words:
+                global_max_words = n_words
+                global_max_info = {'split': split, 'index': i}
+
+        # Print statistics for this split
+        print(f"  - Average words: {np.mean(word_counts):.0f}")
+        print(f"  - Median words:  {np.median(word_counts):.0f}")
+        print(f"  - Max words:     {np.max(word_counts)}")
+        
+    print("\n" + "-"*80)
+    print(f"OVERALL MAXIMUM WORD COUNT: {global_max_words}")
+    print(f"Found in: {global_max_info['split']} set, Sample Index: {global_max_info['index']}")
+    print("-"*80)
 
 def analyze_labels(dataset):
     """Analyze label distribution and statistics"""
@@ -123,6 +169,7 @@ if __name__ == "__main__":
     
     # Explore structure
     explore_dataset_structure(dataset)
+    analyze_word_counts(dataset)
     
     # Analyze labels
     all_labels, label_counts = analyze_labels(dataset)
