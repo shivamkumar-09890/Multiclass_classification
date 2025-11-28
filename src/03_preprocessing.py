@@ -1,191 +1,136 @@
-"""
-Task 3: Data Preprocessing and Splitting
-- Cleans and normalizes text
-- Handles missing values and duplicates
-- Prepares data for model training
-"""
-
-from datasets import load_dataset, Dataset
 import pandas as pd
 import numpy as np
 import re
-from sklearn.model_selection import train_test_split
+from datasets import load_dataset, Dataset, DatasetDict
+from sklearn.cluster import KMeans
 import warnings
+
 warnings.filterwarnings('ignore')
 
-def load_dataset_ecthr():
+def load_data():
     """Load ECTHR_B dataset"""
     print("[v0] Loading ECTHR_B dataset...")
-    dataset = load_dataset("lex_glue", "ecthr_b")
-    return dataset
+    return load_dataset("lex_glue", "ecthr_b")
 
-def normalize_text(txt):
-    """Ensure text is a string."""
-    if txt is None:
-        return ""
-    if isinstance(txt, list):
-        # Join list of strings into one string
-        return " ".join(str(x) for x in txt)
-    return str(txt)
-
-def clean_text(txt):
-    """Clean and normalize legal text"""
-    if not txt:
+def clean_text_minimal(text_input):
+    """
+    Minimal cleaning for Transformers/Longformer.
+    Crucial: KEEPS punctuation and case information.
+    """
+    if text_input is None:
         return ""
     
-    # Convert to lowercase
-    txt = txt.lower()
-    
-    # Remove extra whitespace
-    txt = re.sub(r'\s+', ' ', txt)
-    
-    # Remove URLs
-    txt = re.sub(r'http\S+|www\S+', '', txt)
-    
-    # Remove email addresses
-    txt = re.sub(r'\S+@\S+', '', txt)
-    
-    # Remove special characters but keep important punctuation for legal text
-    txt = re.sub(r'[^\w\s.,;:\-]', '', txt)
-    
-    # Strip leading/trailing whitespace
-    txt = txt.strip()
-    
-    return txt
+    # 1. Handle List vs String
+    if isinstance(text_input, list):
+        text = " ".join(str(x) for x in text_input)
+    else:
+        text = str(text_input)
 
-def preprocess_dataset(dataset):
-    """Preprocess the entire dataset"""
-    print("\n" + "="*80)
-    print("DATA PREPROCESSING")
-    print("="*80)
+    # 2. Normalize Whitespace (Tab/Newline -> Space)
+    text = re.sub(r'\s+', ' ', text).strip()
     
-    processed_data = {}
+    # 3. Remove artifacts but KEEP punctuation (.,;: etc are needed for attention)
+    # Only remove obviously broken encoding artifacts if necessary
+    return text
+
+def remove_duplicates(dataset_split):
+    """
+    Removes duplicate entries based on exact text match.
+    """
+    df = pd.DataFrame(dataset_split)
+    initial_len = len(df)
     
+    # Drop duplicates based on the 'text' column
+    df = df.drop_duplicates(subset=['text'])
+    
+    removed = initial_len - len(df)
+    if removed > 0:
+        print(f"   > Removed {removed} duplicate entries.")
+    
+    return Dataset.from_pandas(df)
+
+def detect_and_remove_outliers(dataset_split, split_name="train"):
+    """
+    Uses K-Means Clustering on document lengths to find and remove 
+    extreme outliers (documents that are suspiciously long).
+    """
+    print(f"\n[Analysis] clustering length values for '{split_name}'...")
+    
+    # 1. Calculate Lengths (Word Count)
+    df = pd.DataFrame(dataset_split)
+    df['length'] = df['text'].apply(lambda x: len(x.split()))
+    
+    # 2. Prepare for Clustering (Reshape for sklearn)
+    X = df[['length']].values
+    
+    # 3. Run K-Means (k=4: Short, Medium, Long, Extreme)
+    kmeans = KMeans(n_clusters=4, random_state=42, n_init=10)
+    df['cluster'] = kmeans.fit_predict(X)
+    
+    # 4. Identify the "Extreme" cluster (The one with the highest average length)
+    cluster_means = df.groupby('cluster')['length'].mean()
+    extreme_cluster_id = cluster_means.idxmax()
+    extreme_cluster_mean = cluster_means.max()
+    
+    # 5. Safety Check: Don't remove if it deletes > 5% of data
+    n_extreme = len(df[df['cluster'] == extreme_cluster_id])
+    pct_extreme = (n_extreme / len(df)) * 100
+    
+    print(f"   > Clusters Found (Avg Lengths): {sorted(cluster_means.values.astype(int))}")
+    print(f"   > Potential Outliers (Cluster {extreme_cluster_id}): {n_extreme} docs ({pct_extreme:.2f}%)")
+    
+    if pct_extreme < 5.0 and extreme_cluster_mean > 10000: # Threshold: must be <5% count AND >10k words
+        print(f"   > Action: REMOVING {n_extreme} extreme outliers.")
+        df_clean = df[df['cluster'] != extreme_cluster_id]
+        return Dataset.from_pandas(df_clean.drop(columns=['length', 'cluster']))
+    else:
+        print(f"   > Action: KEEPING all data. (Outliers not distinct enough or too numerous to delete safely).")
+        return Dataset.from_pandas(df.drop(columns=['length', 'cluster']))
+
+def preprocess_pipeline():
+    # 1. Load
+    raw_dataset = load_data()
+    processed_splits = {}
+    
+    print("\n" + "="*60)
+    print("STARTING PREPROCESSING PIPELINE")
+    print("="*60)
+
     for split in ['train', 'validation', 'test']:
-        if split in dataset:
-            print(f"\nProcessing {split} set...")
+        if split in raw_dataset:
+            print(f"\nProcessing Split: {split.upper()}")
+            print(f"   > Original Count: {len(raw_dataset[split])}")
             
-            # Check for issues before processing
-            print(f"  - Before: {len(dataset[split])} samples")
+            # A. Clean Text
+            # We map the function to the dataset
+            current_ds = raw_dataset[split].map(
+                lambda x: {'text': clean_text_minimal(x['text'])},
+                desc="Cleaning text"
+            )
             
-            # Remove duplicates and empty samples
-            data_dict = {'text': [], 'labels': []}
-            seen_facts = set()
+            # B. Remove Duplicates
+            current_ds = remove_duplicates(current_ds)
             
-            for example in dataset[split]:
-                text = clean_text(normalize_text(example['text']))
-                labels = example['labels']
-                
-                # Skip empty or duplicate samples
-                if text and len(text.strip()) > 0 and text not in seen_facts and labels:
-                    seen_facts.add(text)
-                    data_dict['text'].append(text)
-                    data_dict['labels'].append(labels)
+            # C. Remove Outliers (Only for Training Data usually, but useful for analysis)
+            # We usually don't remove outliers from Test/Validation to keep benchmarks fair,
+            # but for this specific request, we will apply it to Train only.
+            if split == 'train':
+                current_ds = detect_and_remove_outliers(current_ds, split)
             
-            print(f"  - After: {len(data_dict['text'])} samples")
-            print(f"  - Duplicates/empty removed: {len(dataset[split]) - len(data_dict['text'])}")
-            
-            # Create processed dataset
-            processed_data[split] = data_dict
-    
-    return processed_data
+            print(f"   > Final Count:    {len(current_ds)}")
+            processed_splits[split] = current_ds
 
-def analyze_preprocessing_effects(original, processed):
-    """Analyze the effects of preprocessing"""
-    print("\n" + "="*80)
-    print("PREPROCESSING EFFECTS")
-    print("="*80)
+    # 2. Reassemble into DatasetDict
+    final_dataset = DatasetDict(processed_splits)
     
-    for split in ['train', 'validation', 'test']:
-        if split in original:
-            original_size = len(original[split])
-            processed_size = len(processed[split]['text'])
-            removed = original_size - processed_size
-            
-            print(f"\n{split.upper()} SET:")
-            print(f"  - Original samples: {original_size}")
-            print(f"  - After preprocessing: {processed_size}")
-            print(f"  - Samples removed: {removed} ({removed/original_size*100:.2f}%)")
-            
-            # Sample before and after
-            print(f"\n  - Original sample:")
-            print(f"    {original[split][0]['text'][:100]}...")
-            print(f"  - Cleaned sample:")
-            print(f"    {processed[split]['text'][0][:100]}...")
-
-def create_train_val_split(processed_data):
-    """Create train/validation split from preprocessed data"""
-    print("\n" + "="*80)
-    print("DATA SPLITTING FOR TRAINING")
-    print("="*80)
-    
-    # Use the provided train split for training
-    train_facts = processed_data['train']['text']
-    train_labels = processed_data['train']['labels']
-    
-    # Further split train into train and validation (80-20)
-    X_train, X_val, y_train, y_val = train_test_split(
-        train_facts, train_labels, test_size=0.2, random_state=42, shuffle=True
-    )
-    
-    print(f"\nTrain/Validation Split (from original train set):")
-    print(f"  - Training samples: {len(X_train)} (80%)")
-    print(f"  - Validation samples: {len(X_val)} (20%)")
-    print(f"  - Test samples: {len(processed_data['test']['text'])}")
-    
-    split_data = {
-        'train': {'text': X_train, 'labels': y_train},
-        'validation': {'text': X_val, 'labels': y_val},
-        'test': processed_data['test']
-    }
-    
-    return split_data
-
-def get_label_statistics(split_data):
-    """Get label statistics for each split"""
-    print("\n" + "="*80)
-    print("LABEL STATISTICS AFTER PREPROCESSING")
-    print("="*80)
-    
-    for split in ['train', 'validation', 'test']:
-        if split in split_data:
-            labels_list = split_data[split]['labels']
-            
-            # Count label distribution
-            from collections import Counter
-            label_counter = Counter()
-            labels_per_sample = []
-            
-            for labels in labels_list:
-                label_counter.update(labels)
-                labels_per_sample.append(len(labels))
-            
-            print(f"\n{split.upper()} SET:")
-            print(f"  - Total samples: {len(labels_list)}")
-            print(f"  - Unique articles: {len(label_counter)}")
-            print(f"  - Avg labels per sample: {np.mean(labels_per_sample):.2f}")
-            print(f"  - Min/Max labels: {min(labels_per_sample)}/{max(labels_per_sample)}")
+    print("\n" + "="*60)
+    print("PIPELINE COMPLETE")
+    print("="*60)
+    return final_dataset
 
 if __name__ == "__main__":
-    # Load original dataset
-    original_dataset = load_dataset_ecthr()
+    clean_dataset = preprocess_pipeline()
     
-    # Preprocess
-    processed_data = preprocess_dataset(original_dataset)
-    
-    # Analyze preprocessing effects
-    analyze_preprocessing_effects(original_dataset, processed_data)
-    
-    # Create train/val/test split
-    split_data = create_train_val_split(processed_data)
-    
-    # Get label statistics
-    get_label_statistics(split_data)
-    
-    print("\n" + "="*80)
-    print("PREPROCESSING COMPLETE")
-    print("="*80)
-    print("✓ Data cleaned and normalized")
-    print("✓ Duplicates and empty samples removed")
-    print("✓ Train/validation/test splits created")
-    print("✓ Ready for model training")
+    # Quick sanity check of a sample
+    print("\nSample Processed Text (Train[0]):")
+    print(clean_dataset['train'][0]['text'][:300] + "...")

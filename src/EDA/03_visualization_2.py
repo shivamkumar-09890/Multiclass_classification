@@ -1,42 +1,53 @@
 import matplotlib.pyplot as plt
 import seaborn as sns
 from datasets import load_dataset
+from transformers import AutoTokenizer
 import pandas as pd
 import numpy as np
-from collections import Counter
 import warnings
 
 # Professional plotting style
 sns.set_theme(style="whitegrid")
 warnings.filterwarnings('ignore')
 
-def load_data():
-    """Load ECTHR_B dataset"""
+# Constants
+MODEL_CKPT = "allenai/longformer-base-4096"
+
+def load_data_and_tokenizer():
+    """Load ECTHR_B dataset and Longformer Tokenizer"""
+    print(f"[v0] Loading Tokenizer ({MODEL_CKPT})...")
+    # use_fast=True is much faster for counting
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_CKPT, use_fast=True)
+    
     print("[v0] Loading dataset (lex_glue/ecthr_b)...")
     try:
-        return load_dataset("lex_glue", "ecthr_b")
+        dataset = load_dataset("lex_glue", "ecthr_b")
+        return dataset, tokenizer
     except Exception as e:
         print(f"Error: {e}")
-        return None
+        return None, None
 
-def get_text_stats(text_input):
+def get_text_stats(text_input, tokenizer):
     """
-    Returns both word count and estimated token count.
+    Returns both word count (space split) and ACTUAL token count (Longformer).
     """
     # Normalize text (handle list of strings vs single string)
     text = " ".join(str(x) for x in text_input) if isinstance(text_input, list) else str(text_input)
     
+    # 1. Word Count (for Row 1 Graphs)
     word_count = len(text.split())
-    # Estimate tokens: 1 word ≈ 1.3 tokens for RoBERTa/Longformer
-    token_count = int(word_count * 1.3)
+    
+    # 2. Actual Token Count (for Row 2 Graph)
+    # add_special_tokens=True ensures we count [CLS] and [SEP] which take up space
+    token_ids = tokenizer.encode(text, add_special_tokens=True, truncation=False)
+    token_count = len(token_ids)
     
     return word_count, token_count
 
-def visualize_comprehensive_analysis(dataset):
-    print("\n[v0] Generating comprehensive visualizations...")
+def visualize_comprehensive_analysis(dataset, tokenizer):
+    print("\n[v0] Generating comprehensive visualizations (this takes ~30s for tokenization)...")
     
     # --- 1. Data Preparation ---
-    # We now store both Words (for Row 1) and Tokens (for Row 2)
     data_map = {
         'train': {'words': [], 'tokens': []}, 
         'validation': {'words': [], 'tokens': []}, 
@@ -48,7 +59,8 @@ def visualize_comprehensive_analysis(dataset):
         if split in dataset:
             print(f"Processing {split} split...")
             for item in dataset[split]:
-                w_count, t_count = get_text_stats(item['text'])
+                # Pass tokenizer to the stats function
+                w_count, t_count = get_text_stats(item['text'], tokenizer)
                 
                 # Store specific split data
                 data_map[split]['words'].append(w_count)
@@ -57,7 +69,7 @@ def visualize_comprehensive_analysis(dataset):
                 # Store aggregate for coverage report
                 all_tokens.append(t_count)
 
-    # --- 2. Calculate Coverage Stats (Based on TOKENS for Longformer) ---
+    # --- 2. Calculate Coverage Stats (Based on ACTUAL TOKENS) ---
     all_tokens_np = np.array(all_tokens)
     limit = 4096
     covered_count = np.sum(all_tokens_np <= limit)
@@ -77,7 +89,7 @@ def visualize_comprehensive_analysis(dataset):
     gs = fig.add_gridspec(2, 3)
 
     # ---------------------------------------------------------
-    # Row 1: Split-wise Distributions -> NOW SHOWING WORD COUNT
+    # Row 1: Split-wise Distributions (Word Count) - INTACT
     # ---------------------------------------------------------
     splits = ['train', 'validation', 'test']
     colors = ['#1f77b4', '#ff7f0e', '#2ca02c'] # Blue, Orange, Green
@@ -101,7 +113,7 @@ def visualize_comprehensive_analysis(dataset):
         ax.legend()
 
     # ---------------------------------------------------------
-    # Row 2: Cumulative Coverage Analysis -> KEEPS TOKENS (For Model Limits)
+    # Row 2: Cumulative Coverage Analysis (Actual Tokens)
     # ---------------------------------------------------------
     ax_cov = fig.add_subplot(gs[1, :]) # Spans full width
     
@@ -121,8 +133,8 @@ def visualize_comprehensive_analysis(dataset):
                 f'  {coverage_pct:.1f}% of data\n  fits in 4096 tokens', 
                 color='red', fontweight='bold', fontsize=12)
     
-    ax_cov.set_title('Model Readiness: Token Coverage Analysis', fontsize=14)
-    ax_cov.set_xlabel('Token Length (Approx Words * 1.3)')
+    ax_cov.set_title('Model Readiness: Actual Token Coverage Analysis', fontsize=14)
+    ax_cov.set_xlabel('Token Length (Actual Longformer Tokens)') # Label updated
     ax_cov.set_ylabel('Percentage of Dataset Captured (%)')
     ax_cov.set_xlim(0, max(all_tokens_np) + 500)
     ax_cov.set_yticks(np.arange(0, 101, 10))
@@ -133,6 +145,8 @@ def visualize_comprehensive_analysis(dataset):
     print("✓ Saved: comprehensive_analysis_v2.png")
 
 if __name__ == "__main__":
-    dataset = load_data()
-    if dataset:
-        visualize_comprehensive_analysis(dataset)
+    # Load dataset AND tokenizer
+    dataset, tokenizer = load_data_and_tokenizer()
+    
+    if dataset and tokenizer:
+        visualize_comprehensive_analysis(dataset, tokenizer)
