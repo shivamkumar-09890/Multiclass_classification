@@ -211,7 +211,7 @@ class ECTHRWeightedTrainer:
         all_preds = np.vstack(all_preds)
         all_labels = np.vstack(all_labels)
         
-        from sklearn.metrics import f1_score, accuracy_score, classification_report
+        from sklearn.metrics import f1_score, accuracy_score
         pred_binary = (all_preds > 0.5).astype(int)
         
         acc = accuracy_score(all_labels, pred_binary)
@@ -222,8 +222,6 @@ class ECTHRWeightedTrainer:
         print(f"  Exact Match Accuracy: {acc:.4f}")
         print(f"  F1 Micro:             {f1_mic:.4f}")
         print(f"  F1 Macro:             {f1_mac:.4f}")
-        print("\nClass-wise Report:")
-        print(classification_report(all_labels, pred_binary, target_names=self.mlb.classes_, zero_division=0))
 
 if __name__ == "__main__":
     # --- CONFIGURATION ---
