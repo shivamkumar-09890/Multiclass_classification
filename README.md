@@ -69,12 +69,12 @@ We analyzed whether stripping punctuation would save tokens.
 
 | Model Strategy         | Exact Match Acc | Micro-F1 (Global) | Macro-F1 (Fairness) |
 |-------------------------|-----------------|-------------------|---------------------|
-| Stage 1 (Baseline)      | **60.9%**       | **80.6%**         | 65.0%               |
-| Stage 2 (Weighted)      | 56.1%           | 79.4%             | **74.8%**           |
+| Stage 1 (Model 1)      | **60.9%**       | **80.6%**         | 72.6%               |
+| Stage 2 (Model 2)      | 56.1%           | 79.4%             | **74.8%**           |
 
 **Interpretation**:
-- Baseline focuses on being "Safe" → predicts common classes correctly
-- Weighted Model is a "Specialist" → sacrifices slightly on exact matches to gain **+9.8%** improvement in Macro-F1, effectively solving rare class blindness
+- Model 1 focuses on being "Safe" → predicts common classes correctly
+- Weighted Model 2 is a "Specialist" → sacrifices slightly on exact matches to gain **+2.2%** improvement in Macro-F1, effectively improving rare class prediction
 
 ## 🚀 Usage Instructions
 
