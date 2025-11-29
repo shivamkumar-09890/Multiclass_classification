@@ -1,147 +1,136 @@
-# Multi-Label Classification for Legal Documents (ECTHR)
+# Legal Judgment Prediction with Weighted Longformer (ECtHR-B)
 
-## Assignment Overview
+[![made-with-python](https://img.shields.io/badge/Made%20with-Python-red.svg)](#) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-This project implements a multi-label classification system for European Court of Human Rights (ECTHR) legal case documents. The goal is to predict multiple human rights violations that may apply to each case, demonstrating how machine learning can be applied to complex legal domain tasks.
+## 📌 Project Overview
 
-## Key Concepts
+This project implements a high-performance **Multi-Label Classification** model for the **European Court of Human Rights (ECtHR)** dataset — **Task B** from **LexGLUE**.
 
-- **Multi-Label Classification**: Unlike binary classification where each sample belongs to one class, multi-label classification allows each sample to belong to multiple classes simultaneously. In this case, a legal document can involve multiple human rights violations.
-- **Transfer Learning**: We leverage pre-trained language models (DistilBERT) and fine-tune them on the legal domain to improve performance.
-- **Baseline vs Fine-tuned Models**: We compare out-of-the-box pre-trained models with domain-specific fine-tuned versions.
+The primary challenge in this domain is **Extreme Class Imbalance** combined with **Long Document Contexts** (avg. 2,000+ words). Standard models often achieve high accuracy by memorizing common classes (e.g., Article 3) while completely ignoring rare human rights violations (e.g., Article 5).
 
-## Project Structure
+### Our Approach
+1. **Model**: Fine-tuned `allenai/longformer-base-4096` to handle full case documents  
+2. **Strategy**: A **Two-Stage Training** pipeline  
+   - **Stage 1**: General training to learn legal language patterns  
+   - **Stage 2**: Refinement using a **custom Weighted Binary Cross-Entropy Loss** to penalize neglect of rare classes  
+3. **Result**: Achieved **Macro-F1 score of 74.8%**, significantly outperforming the standard baseline (~65%) on rare classes.
 
+## 📂 Project Structure
 ```
-├── scripts/
-│   ├── 01_load_explore_dataset.py      # Load and explore ECTHR_B dataset
-│   ├── 02_eda_visualization.py         # Exploratory Data Analysis with visualizations
-│   ├── 03_preprocessing.py             # Data cleaning and train/val/test splitting
-│   ├── 04_train_models.py              # Train baseline and fine-tuned models
-│   ├── 05_compare_models.py            # Evaluate and compare model performance
-│   └── 06_documentation.py             # Generate comprehensive report
-├── requirements.txt                    # Python dependencies
-└── README.md                           # This file
-```
-
-## Installation
-
-1. **Clone or download this project**
-
-2. **Install dependencies**:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-3. **Ensure you have sufficient disk space** for model downloads (approximately 1-2 GB)
-
-## Usage
-
-Run the scripts in sequential order:
-
-```
-bash
-# 1. Load and explore the dataset
-python scripts/01_load_explore_dataset.py
-
-# 2. Perform EDA and generate visualizations
-python scripts/02_eda_visualization.py
-
-# 3. Preprocess data and create splits
-python scripts/03_preprocessing.py
-
-# 4. Train baseline and fine-tuned models
-python scripts/04_train_models.py
-
-# 5. Compare model performance
-python scripts/05_compare_models.py
-
-# 6. Generate final documentation report
-python scripts/06_documentation.py
+├── src/
+│   ├── Understanding_data/
+│   │   └── 01_load_explore_dataset.py    # Initial dataset inspection
+│   ├── EDA/
+│   │   ├── 02_visualization_1.py         # Basic label frequency plots
+│   │   ├── 03_visualization_2.py         # Advanced coverage analysis
+│   │   └── 04_visualize_punct.py         # "Punctuation Tax" analysis
+│   ├── Training/
+│   │   ├── 05_train_models_1.py          # Baseline Model Training (Standard Loss)
+│   │   └── 06_train_model_predata_2.py   # Weighted Refinement Training (Custom Loss)
+│   ├── final_results/
+│   │   ├── 08_final_eval.py              # Generate metrics for trained models
+│   │   ├── 09_model_comparison.py        # Compare Baseline vs Weighted vs Short
+│   │   ├── 10_overall_score.py           # Evaluation on full dataset
+│   │   └── 11_comparing_both_csv.py      # CSV-based deep dive comparison
+│   └── scripts/
+│       ├── ploting_final_metrics.py      # Generate final report graphs
+│       └── Punctuation_test.py           # Utility for tokenization tests
+│
+├── analysis_results/                     # Confusion matrices & Distributions
+├── comparison_results/                   # Comparison plots (Delta charts)
+├── ecthr_longformer_weighted/            # Saved Weighted Model (Best)
+├── processed_ecthr_b/                    # Cleaned Dataset (Arrow format)
+└── README.md
 ```
 
-## Expected Outputs
+## 📊 Key Findings
 
-Each script generates outputs in the console and optionally saves results:
+### 1. Class Imbalance
+The dataset is heavily skewed:
+- Article 3 (Torture) appears ~6,000 times  
+- Article 5 (Liberty) appears ~100 times  
 
-- **Script 1-2**: Dataset statistics, label distribution charts, text length analysis
-- **Script 3**: Data split information, preprocessing statistics
-- **Script 4**: Training logs, model checkpoints, loss curves
-- **Script 5**: Performance metrics (F1-scores, Hamming Loss, ROC-AUC), comparison tables
-- **Script 6**: Comprehensive report with findings, challenges, and recommendations
+**Solution**: Calculated **inverse frequency weights** (e.g., **109× penalty** for missing Article 5) and injected them into the loss function.
 
-## Dataset
+### 2. Context Length
+- Mean Length: **~2,137 tokens**  
+- Coverage: Longformer (4096 tokens) covers **87.2%** of cases fully without truncation  
+- A standard BERT (512 tokens) would lose critical information in **>75%** of cases
 
-**ECTHR_B (European Court of Human Rights - Binary Multi-label)**
-- Contains legal cases from the European Court of Human Rights
-- Each document can be labeled with multiple human rights violations
-- Labels represent different articles of the European Convention on Human Rights
-- Multi-label setup means documents often have 2-5 violations per case
+### 3. Punctuation Analysis
+We analyzed whether stripping punctuation would save tokens.
 
-## Models
+**Result**: Keeping punctuation only increases token count by **2.3%**  
+**Decision**: Kept punctuation to preserve semantic boundaries (clauses) crucial for legal interpretation.
 
-### Baseline Model
-- Pre-trained DistilBERT (no fine-tuning)
-- Tests the zero-shot capability on legal domain
-- Serves as comparison point
+## 🏆 Final Results
 
-### Fine-tuned Model
-- DistilBERT fine-tuned on ECTHR training set
-- Adapts the model to legal domain language and structure
-- Should demonstrate improved performance
+**Comparison on the Test Set:**
 
-## Evaluation Metrics
+| Model Strategy         | Exact Match Acc | Micro-F1 (Global) | Macro-F1 (Fairness) |
+|-------------------------|-----------------|-------------------|---------------------|
+| Stage 1 (Baseline)      | **60.9%**       | **80.6%**         | 65.0%               |
+| Stage 2 (Weighted)      | 56.1%           | 79.4%             | **74.8%**           |
 
-For multi-label classification:
-- **Hamming Loss**: Fraction of labels that are incorrectly predicted
-- **F1-Score (Macro)**: Average F1 across all labels (treats each label equally)
-- **F1-Score (Micro)**: Calculates metrics globally by counting total TP, FN, FP
-- **Subset Accuracy**: Percentage of samples with all labels predicted correctly
-- **ROC-AUC**: Area under receiver operating characteristic curve per label
+**Interpretation**:
+- Baseline focuses on being "Safe" → predicts common classes correctly
+- Weighted Model is a "Specialist" → sacrifices slightly on exact matches to gain **+9.8%** improvement in Macro-F1, effectively solving rare class blindness
 
-## Key Findings
+## 🚀 Usage Instructions
 
-After running the complete pipeline, you'll discover:
-- How many labels are typically associated with legal cases
-- Which violations are most common
-- Performance gaps between baseline and fine-tuned models
-- Domain-specific challenges in legal text classification
-- Recommendations for further improvement
+### 1. Setup Environment
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
+### 2. Run Understanding data
+```bash
+python src/Understanding_data/01_load_explore_dataset.py
+```
 
-## Challenges in Legal Document Classification
+### 3. Run EDA
+```bash
+python src/EDA/02_visualization_1.py
+python src/EDA/03_visualization_2.py
+python src/EDA/04_visualize_punct.py
+```
 
-1. **Class Imbalance**: Some human rights violations are much rarer than others
-2. **Long Documents**: Legal cases can be very long, requiring careful handling
-3. **Complex Language**: Legal terminology and phrasing differs from general text
-4. **Multiple Valid Labels**: Legal complexity means documents genuinely have multiple violations
-5. **Limited Training Data**: Domain-specific datasets are smaller than general NLP datasets
+### 4. Training
+```bash
+python src/Training/05_train_models_1.py
+python src/Training/06_train_model_predata_2.py
+```
 
-## Requirements
+### 5. Get final Results
+```bash
+python src/final_results/08_final_eval.py
+python src/final_results/09_model_comparison.py
+python src/final_results/10_overall_score.py
+python src/final_results/11_comparing_both_csv.py
+```
 
-- Python 3.8+
-- PyTorch (for transformer models)
-- Hugging Face Transformers & Datasets
-- Scikit-learn (for evaluation metrics)
-- Pandas & NumPy (for data handling)
-- Matplotlib & Seaborn (for visualizations)
+### 6. Saving plot
+```bash
+python src/scripts/Plot_train_log.py
+python src/scripts/ploting_final_metrics.py
+python src/scripts/Punctuation_test.py
+```
 
-See `requirements.txt` for specific versions.
+## 🖼️ Gallery of Analysis
 
-## Notes
+### Training Convergence
 
-- First run will download pre-trained models (1-2 GB)
-- Training may take time depending on your hardware (GPU recommended)
-- Results are reproducible with fixed random seeds
-- Adjust batch size and learning rate in scripts if running on limited hardware
+Class-Wise Performance
 
-## Further Improvements
 
-- Experiment with different pre-trained models (RoBERTa, LEGAL-BERT)
-- Implement ensemble methods combining multiple models
-- Use hierarchical classification for label relationships
-- Apply active learning to improve on hard examples
-- Fine-tune on domain-specific legal documents
+### Outlier Detection (K-Means)
 
----
+Global Metrics Comparison
 
-**Assignment Status**: Complete with full pipeline implementation and analysis
+
+#### 📜 Citation
+
+If you use this code or methodology, please cite the original LexGLUE paper:
+
+Chalkidis et al., "LexGLUE: A Benchmark Dataset for Legal Language Understanding in English", ACL 2022.
